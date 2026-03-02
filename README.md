@@ -78,6 +78,10 @@ This project uses `uv` for fast Python package management.
     ```bash
     npm run dev
     ```
+4.  **(optional:) Expose to the world using ngrok**:
+    ```bash
+    ngrok http 5173
+    ```
 
 ## Usage
 

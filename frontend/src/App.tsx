@@ -20,6 +20,10 @@ interface ProbeSample {
 }
 
 type ProbeHistory = Record<ProbeKey, ProbeSample[]>;
+type ProbeRange = { min: number; max: number };
+type ProbeRanges = Partial<Record<ProbeKey, ProbeRange>>;
+type ProbeRangeDraft = { min: string; max: string };
+type ProbeRangeDrafts = Partial<Record<ProbeKey, ProbeRangeDraft>>;
 
 const PROBE_KEYS: ProbeKey[] = ['probe1', 'probe2', 'probe3', 'probe4'];
 const HISTORY_STORAGE_KEY = 'tp25_probe_history_v1';
@@ -114,6 +118,13 @@ const convertTemperature = (value: number, unit: TemperatureUnit): number => {
 const convertRate = (value: number, unit: TemperatureUnit): number => {
   if (unit === 'f') {
     return value * 9 / 5;
+  }
+  return value;
+};
+
+const toCelsius = (value: number, unit: TemperatureUnit): number => {
+  if (unit === 'f') {
+    return (value - 32) * 5 / 9;
   }
   return value;
 };
@@ -287,6 +298,9 @@ function App() {
   const [history, setHistory] = useState<ProbeHistory>(() => loadHistoryFromStorage());
   const [temperatureUnit, setTemperatureUnit] = useState<TemperatureUnit>(() => loadTemperatureUnitFromStorage());
   const [now, setNow] = useState<number>(() => Date.now());
+  const [probeRanges, setProbeRanges] = useState<ProbeRanges>({});
+  const [rangeDrafts, setRangeDrafts] = useState<ProbeRangeDrafts>({});
+  const [editingRangeFor, setEditingRangeFor] = useState<ProbeKey | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -434,11 +448,82 @@ function App() {
     }));
   };
 
+  const resetAllProbeHistory = () => {
+    setHistory(emptyProbeHistory());
+  };
+
+  const openRangeEditor = (probeKey: ProbeKey) => {
+    const existingRange = probeRanges[probeKey];
+
+    setRangeDrafts((previousDrafts) => ({
+      ...previousDrafts,
+      [probeKey]: {
+        min: existingRange ? convertTemperature(existingRange.min, temperatureUnit).toFixed(1) : '',
+        max: existingRange ? convertTemperature(existingRange.max, temperatureUnit).toFixed(1) : ''
+      }
+    }));
+
+    setEditingRangeFor(probeKey);
+  };
+
+  const updateRangeDraft = (probeKey: ProbeKey, field: 'min' | 'max', value: string) => {
+    setRangeDrafts((previousDrafts) => ({
+      ...previousDrafts,
+      [probeKey]: {
+        min: field === 'min' ? value : previousDrafts[probeKey]?.min ?? '',
+        max: field === 'max' ? value : previousDrafts[probeKey]?.max ?? ''
+      }
+    }));
+  };
+
+  const saveRange = (probeKey: ProbeKey) => {
+    const draft = rangeDrafts[probeKey];
+    const minInput = draft?.min.trim() ?? '';
+    const maxInput = draft?.max.trim() ?? '';
+
+    if (!minInput || !maxInput) {
+      window.alert('Please enter both minimum and maximum temperatures.');
+      return;
+    }
+
+    const minRaw = Number(minInput);
+    const maxRaw = Number(maxInput);
+
+    if (!Number.isFinite(minRaw) || !Number.isFinite(maxRaw) || minRaw >= maxRaw) {
+      window.alert('Please enter a valid range where minimum is less than maximum.');
+      return;
+    }
+
+    const min = toCelsius(minRaw, temperatureUnit);
+    const max = toCelsius(maxRaw, temperatureUnit);
+
+    setProbeRanges((previousRanges) => ({
+      ...previousRanges,
+      [probeKey]: { min, max }
+    }));
+
+    setEditingRangeFor(null);
+  };
+
+  const cancelRangeEdit = () => {
+    setEditingRangeFor(null);
+  };
+
   const renderProbe = (name: string, key: ProbeKey) => {
     const samples = history[key];
     const lastSample = getLastProbeSample(samples);
     const latestValue = lastSample?.value ?? null;
     const isLive = Boolean(lastSample) && (now - (lastSample?.timestamp ?? 0) <= PROBE_LIVE_TIMEOUT_MS);
+    const configuredRange = probeRanges[key];
+    const isOutOfRange = Boolean(
+      isLive &&
+      latestValue !== null &&
+      configuredRange &&
+      (latestValue < configuredRange.min || latestValue > configuredRange.max)
+    );
+    const rangeLabel = configuredRange
+      ? `${formatTemperature(configuredRange.min, temperatureUnit)} – ${formatTemperature(configuredRange.max, temperatureUnit)}`
+      : 'Not set';
     const stats = getStats(samples);
     const chartBounds = getChartBounds(CHART_WIDTH, CHART_HEIGHT);
     const chartDomain = samples.length >= 2 ? getChartDomain(samples) : null;
@@ -447,10 +532,13 @@ function App() {
     const yTicks = chartDomain ? buildTicks(chartDomain.minValue, chartDomain.maxValue, Y_TICK_COUNT) : [];
 
     return (
-      <section className={`probe-card ${!isLive ? 'disconnected' : ''}`}>
+      <section className={`probe-card ${!isLive ? 'disconnected' : ''} ${isOutOfRange ? 'out-of-range' : ''}`}>
         <div className="probe-header">
           <h2>{name}</h2>
           <div className="probe-actions">
+            <button className="range-button" onClick={() => openRangeEditor(key)}>
+              Set Range
+            </button>
             <button className="reset-button" onClick={() => resetProbeHistory(key)}>
               Reset
             </button>
@@ -461,6 +549,38 @@ function App() {
         </div>
 
         <div className="temp-display">{formatTemperature(isLive ? latestValue : null, temperatureUnit)}</div>
+        <div className="range-summary">Range: {rangeLabel}</div>
+
+        {editingRangeFor === key && (
+          <div className="range-editor">
+            <label>
+              Min ({unitSymbol(temperatureUnit)})
+              <input
+                type="number"
+                step="0.1"
+                value={rangeDrafts[key]?.min ?? ''}
+                onChange={(event) => updateRangeDraft(key, 'min', event.target.value)}
+              />
+            </label>
+            <label>
+              Max ({unitSymbol(temperatureUnit)})
+              <input
+                type="number"
+                step="0.1"
+                value={rangeDrafts[key]?.max ?? ''}
+                onChange={(event) => updateRangeDraft(key, 'max', event.target.value)}
+              />
+            </label>
+            <div className="range-editor-actions">
+              <button className="range-save-button" onClick={() => saveRange(key)}>
+                Save
+              </button>
+              <button className="range-cancel-button" onClick={cancelRangeEdit}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="chart-wrap">
           {samples.length >= 2 ? (
@@ -555,6 +675,9 @@ function App() {
           <h1>TP25 Probe Dashboard</h1>
         </div>
         <div className="header-controls">
+          <button className="reset-all-button" onClick={resetAllProbeHistory}>
+            Reset All
+          </button>
           <button
             className={`unit-toggle ${temperatureUnit === 'f' ? 'fahrenheit' : 'celsius'}`}
             onClick={() => setTemperatureUnit((current) => (current === 'c' ? 'f' : 'c'))}

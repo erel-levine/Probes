@@ -26,6 +26,28 @@
   gap: 0.7rem;
 }
 
+.reset-all-button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+}
+
+.reset-all-button:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.reset-all-button:active {
+  transform: translateY(1px);
+}
+
 .eyebrow {
   margin: 0;
   font-size: 0.78rem;
@@ -144,6 +166,11 @@ h1 {
   color: #64748b;
 }
 
+.probe-card.out-of-range {
+  background: #fffbeb;
+  border-color: #f59e0b;
+}
+
 .probe-header {
   display: flex;
   justify-content: space-between;
@@ -160,6 +187,23 @@ h1 {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+.range-button {
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.range-button:hover {
+  background: #ffedd5;
+  border-color: #fdba74;
 }
 
 .reset-button {
@@ -206,6 +250,74 @@ h1 {
   font-weight: 700;
   margin-top: 0.65rem;
   color: #0f172a;
+}
+
+.range-summary {
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.range-editor {
+  margin-top: 0.7rem;
+  padding: 0.7rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.range-editor label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.range-editor input {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.86rem;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.range-editor-actions {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.range-save-button,
+.range-cancel-button {
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.range-save-button {
+  border: 1px solid #f59e0b;
+  background: #f59e0b;
+  color: #ffffff;
+}
+
+.range-save-button:hover {
+  background: #d97706;
+  border-color: #d97706;
+}
+
+.range-cancel-button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.range-cancel-button:hover {
+  background: #f1f5f9;
 }
 
 .disconnected .temp-display {
