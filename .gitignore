@@ -6,5 +6,8 @@ dist/
 wheels/
 *.egg-info
 
+# Reference project
+thermopro-cli/
+
 # Virtual environments
 .venv

@@ -19,6 +19,7 @@ LOGGER = logging.getLogger("thermopro.backend")
 
 TP25_CMD_CHAR_UUID = "1086fff1-3343-4817-8bb2-b32206336ce8"
 TP25_DATA_CHAR_UUID = "1086fff2-3343-4817-8bb2-b32206336ce8"
+TP25_SERVICE_UUID = "1086fff0-3343-4817-8bb2-b32206336ce8"
 TP25_NUM_PROBES = 6
 TP25_HANDSHAKE_COMMAND = bytes.fromhex("01098a7a13b73ed68b67c2a0")
 
@@ -42,6 +43,7 @@ class RuntimeConfig:
     reconnect_backoff_seconds: float
     notification_timeout_seconds: float
     connect_timeout_seconds: float
+    device_name_prefixes: tuple[str, ...]
 
 
 def _decode_probe_temperature(byte1: int, byte2: int) -> float | None:
@@ -282,7 +284,19 @@ class TP25Service:
 
         matches: list[tuple[str, int]] = []
         for address, (device, advertisement) in discovered.items():
-            if (device.name or "").upper().startswith("TP25"):
+            device_name = (device.name or "").strip().upper()
+            adv_local_name = (getattr(advertisement, "local_name", None) or "").strip().upper()
+            service_uuids = {uuid.lower() for uuid in (advertisement.service_uuids or [])}
+
+            has_tp25_name = any(
+                candidate.startswith(prefix)
+                for candidate in (device_name, adv_local_name)
+                if candidate
+                for prefix in self._config.device_name_prefixes
+            )
+            has_tp25_service = TP25_SERVICE_UUID in service_uuids
+
+            if has_tp25_name or has_tp25_service:
                 matches.append((address, advertisement.rssi))
 
         if not matches:
@@ -514,12 +528,23 @@ def _load_config() -> RuntimeConfig:
     raw_backoff = os.getenv("TP25_RECONNECT_BACKOFF_SECONDS", "1")
     raw_notification_timeout = os.getenv("TP25_NOTIFICATION_TIMEOUT_SECONDS", "30")
     raw_connect_timeout = os.getenv("TP25_CONNECT_TIMEOUT_SECONDS", "8")
+    raw_name_prefixes = os.getenv("TP25_DEVICE_NAME_PREFIXES", "TP25,THERMOPRO")
+    name_prefixes = tuple(
+        prefix.strip().upper()
+        for prefix in raw_name_prefixes.split(",")
+        if prefix.strip()
+    )
+
+    if not name_prefixes:
+        name_prefixes = ("TP25", "THERMOPRO")
+
     return RuntimeConfig(
         tp25_address=os.getenv("TP25_ADDRESS"),
         scan_timeout_seconds=float(raw_timeout),
         reconnect_backoff_seconds=float(raw_backoff),
         notification_timeout_seconds=float(raw_notification_timeout),
         connect_timeout_seconds=float(raw_connect_timeout),
+        device_name_prefixes=name_prefixes,
     )
 
 

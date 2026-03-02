@@ -11,8 +11,23 @@ This project provides a web-based dashboard for the ThermoPro TP25 4-probe therm
 ## Requirements
 
 - [uv](https://github.com/astral-sh/uv) (Python package manager)
+- Python 3.11+
 - Node.js & npm
 - Bluetooth enabled on your computer
+
+### Raspberry Pi (Raspberry Pi OS / Linux)
+
+- Ensure Bluetooth stack is installed and running:
+    ```bash
+    sudo apt update
+    sudo apt install -y bluetooth bluez libglib2.0-dev
+    sudo systemctl enable --now bluetooth
+    ```
+- Add your user to Bluetooth-related groups, then log out/in:
+    ```bash
+    sudo usermod -a -G bluetooth,netdev $USER
+    ```
+- On Linux/BlueZ, the device may advertise as `Thermopro` instead of `TP25`; the backend now matches both by default.
 
 ## Setup
 
@@ -35,7 +50,8 @@ This project uses `uv` for fast Python package management.
     - `TP25_SCAN_TIMEOUT_SECONDS`: Scan duration per discovery pass (default: `8`).
     - `TP25_RECONNECT_BACKOFF_SECONDS`: Delay between failed attempts (default: `1`).
     - `TP25_NOTIFICATION_TIMEOUT_SECONDS`: Seconds to wait without data before re-handshake/reconnect (default: `30`).
-    - `TP25_CONNECT_TIMEOUT_SECONDS`: BLE connect timeout per attempt (default: `4`).
+    - `TP25_CONNECT_TIMEOUT_SECONDS`: BLE connect timeout per attempt (default: `8`).
+    - `TP25_DEVICE_NAME_PREFIXES`: Comma-separated BLE name prefixes for discovery (default: `TP25,THERMOPRO`).
 
     Example:
     ```bash

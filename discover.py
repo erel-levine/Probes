@@ -9,9 +9,13 @@ async def discover_devices() -> None:
     print("Scanning for BLE devices (10 seconds)...")
     devices = await BleakScanner.discover(timeout=10)
 
-    matches = [d for d in devices if (d.name or "").upper().startswith("TP25")]
+    matches = [
+        d
+        for d in devices
+        if (d.name or "").upper().startswith(("TP25", "THERMOPRO"))
+    ]
     if not matches:
-        print("No TP25 devices found.")
+        print("No TP25/Thermopro devices found.")
         return
 
     for device in matches:
