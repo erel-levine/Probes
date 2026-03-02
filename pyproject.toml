@@ -1,0 +1,14 @@
+[project]
+name = "thermopro"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bleak>=0.21.1",
+    "fastapi>=0.109.2",
+    "uvicorn[standard]>=0.27.1",
+    "python-multipart>=0.0.9",
+    "thermopro-ble>=0.10.0",
+    "thermopro-tp25-ble>=0.1.1",
+]
