@@ -171,6 +171,11 @@ h1 {
   border-color: #f59e0b;
 }
 
+.probe-card.stall-detected {
+  background: #fff7ed;
+  border-color: #f97316;
+}
+
 .probe-header {
   display: flex;
   justify-content: space-between;
@@ -190,9 +195,9 @@ h1 {
 }
 
 .range-button {
-  border: 1px solid #fed7aa;
-  background: #fff7ed;
-  color: #9a3412;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
   border-radius: 999px;
   padding: 0.2rem 0.6rem;
   font-size: 0.72rem;
@@ -202,8 +207,42 @@ h1 {
 }
 
 .range-button:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.range-button.active {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.range-button.active:hover {
   background: #ffedd5;
   border-color: #fdba74;
+}
+
+.stall-button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.stall-button:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.stall-button.active {
+  border-color: #f97316;
+  background: #fff7ed;
+  color: #9a3412;
 }
 
 .reset-button {
@@ -291,6 +330,7 @@ h1 {
 }
 
 .range-save-button,
+.range-reset-button,
 .range-cancel-button {
   border-radius: 8px;
   padding: 0.35rem 0.6rem;
@@ -317,6 +357,16 @@ h1 {
 }
 
 .range-cancel-button:hover {
+  background: #f1f5f9;
+}
+
+.range-reset-button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.range-reset-button:hover {
   background: #f1f5f9;
 }
 

@@ -24,6 +24,7 @@ type ProbeRange = { min: number; max: number };
 type ProbeRanges = Partial<Record<ProbeKey, ProbeRange>>;
 type ProbeRangeDraft = { min: string; max: string };
 type ProbeRangeDrafts = Partial<Record<ProbeKey, ProbeRangeDraft>>;
+type ProbeStallFlags = Partial<Record<ProbeKey, boolean>>;
 
 const PROBE_KEYS: ProbeKey[] = ['probe1', 'probe2', 'probe3', 'probe4'];
 const HISTORY_STORAGE_KEY = 'tp25_probe_history_v1';
@@ -32,6 +33,10 @@ const TEN_MINUTES_MS = 10 * 60 * 1000;
 const WS_WATCHDOG_MS = 4000;
 const WS_STALE_MS = 12000;
 const PROBE_LIVE_TIMEOUT_MS = 20000;
+const STALL_WINDOW_MS = 3 * 60 * 1000;
+const STALL_START_RATIO = 0.2;
+const STALL_END_RATIO = 5;
+const STALL_MIN_PREVIOUS_CHANGE_C = 0.5;
 const CHART_WIDTH = 560;
 const CHART_HEIGHT = 180;
 const X_TICK_COUNT = 6;
@@ -287,6 +292,38 @@ const getLastProbeSample = (samples: ProbeSample[]): ProbeSample | null => {
   return samples[samples.length - 1];
 };
 
+const getWindowTemperatureChange = (samples: ProbeSample[], startTs: number, endTs: number): number | null => {
+  const windowSamples = samples.filter((sample) => sample.timestamp >= startTs && sample.timestamp <= endTs);
+  if (windowSamples.length < 2) {
+    return null;
+  }
+
+  const first = windowSamples[0];
+  const last = windowSamples[windowSamples.length - 1];
+  return last.value - first.value;
+};
+
+const getStallChangeRatios = (samples: ProbeSample[], now: number): { lastAbsChange: number; previousAbsChange: number } | null => {
+  if (samples.length < 4) {
+    return null;
+  }
+
+  const lastWindowStart = now - STALL_WINDOW_MS;
+  const previousWindowStart = now - STALL_WINDOW_MS * 2;
+
+  const lastChange = getWindowTemperatureChange(samples, lastWindowStart, now);
+  const previousChange = getWindowTemperatureChange(samples, previousWindowStart, lastWindowStart);
+
+  if (lastChange === null || previousChange === null) {
+    return null;
+  }
+
+  return {
+    lastAbsChange: Math.abs(lastChange),
+    previousAbsChange: Math.abs(previousChange)
+  };
+};
+
 function App() {
   const [data, setData] = useState<ProbesData>({
     probe1: null,
@@ -301,6 +338,8 @@ function App() {
   const [probeRanges, setProbeRanges] = useState<ProbeRanges>({});
   const [rangeDrafts, setRangeDrafts] = useState<ProbeRangeDrafts>({});
   const [editingRangeFor, setEditingRangeFor] = useState<ProbeKey | null>(null);
+  const [stallEnabled, setStallEnabled] = useState<ProbeStallFlags>({});
+  const [stallActive, setStallActive] = useState<ProbeStallFlags>({});
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -325,6 +364,54 @@ function App() {
 
     window.localStorage.setItem(UNIT_STORAGE_KEY, temperatureUnit);
   }, [temperatureUnit]);
+
+  useEffect(() => {
+    setStallActive((previousActive) => {
+      const nextActive: ProbeStallFlags = { ...previousActive };
+      let changed = false;
+
+      PROBE_KEYS.forEach((probeKey) => {
+        const currentlyActive = Boolean(previousActive[probeKey]);
+        const trackingEnabled = Boolean(stallEnabled[probeKey]);
+        const lastSample = getLastProbeSample(history[probeKey]);
+        const isLive = Boolean(lastSample) && (now - (lastSample?.timestamp ?? 0) <= PROBE_LIVE_TIMEOUT_MS);
+
+        if (!trackingEnabled || !isLive) {
+          if (currentlyActive) {
+            nextActive[probeKey] = false;
+            changed = true;
+          }
+          return;
+        }
+
+        const changes = getStallChangeRatios(history[probeKey], now);
+        if (!changes || changes.previousAbsChange < STALL_MIN_PREVIOUS_CHANGE_C) {
+          if (currentlyActive) {
+            nextActive[probeKey] = false;
+            changed = true;
+          }
+          return;
+        }
+
+        const startStall = changes.lastAbsChange <= changes.previousAbsChange * STALL_START_RATIO;
+        const endStall = changes.lastAbsChange >= changes.previousAbsChange * STALL_END_RATIO;
+
+        let nextProbeActive = currentlyActive;
+        if (!currentlyActive && startStall) {
+          nextProbeActive = true;
+        } else if (currentlyActive && endStall) {
+          nextProbeActive = false;
+        }
+
+        if (nextProbeActive !== currentlyActive) {
+          nextActive[probeKey] = nextProbeActive;
+          changed = true;
+        }
+      });
+
+      return changed ? nextActive : previousActive;
+    });
+  }, [history, now, stallEnabled]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -509,12 +596,46 @@ function App() {
     setEditingRangeFor(null);
   };
 
+  const resetRange = (probeKey: ProbeKey) => {
+    setProbeRanges((previousRanges) => {
+      const nextRanges = { ...previousRanges };
+      delete nextRanges[probeKey];
+      return nextRanges;
+    });
+
+    setRangeDrafts((previousDrafts) => ({
+      ...previousDrafts,
+      [probeKey]: { min: '', max: '' }
+    }));
+
+    setEditingRangeFor(null);
+  };
+
+  const toggleStallTracking = (probeKey: ProbeKey) => {
+    setStallEnabled((previousFlags) => {
+      const nextEnabled = !previousFlags[probeKey];
+      if (!nextEnabled) {
+        setStallActive((previousActive) => ({
+          ...previousActive,
+          [probeKey]: false
+        }));
+      }
+
+      return {
+        ...previousFlags,
+        [probeKey]: nextEnabled
+      };
+    });
+  };
+
   const renderProbe = (name: string, key: ProbeKey) => {
     const samples = history[key];
     const lastSample = getLastProbeSample(samples);
     const latestValue = lastSample?.value ?? null;
     const isLive = Boolean(lastSample) && (now - (lastSample?.timestamp ?? 0) <= PROBE_LIVE_TIMEOUT_MS);
     const configuredRange = probeRanges[key];
+    const stallTrackingEnabled = Boolean(stallEnabled[key]);
+    const stallDetected = isLive && stallTrackingEnabled && Boolean(stallActive[key]);
     const isOutOfRange = Boolean(
       isLive &&
       latestValue !== null &&
@@ -532,12 +653,21 @@ function App() {
     const yTicks = chartDomain ? buildTicks(chartDomain.minValue, chartDomain.maxValue, Y_TICK_COUNT) : [];
 
     return (
-      <section className={`probe-card ${!isLive ? 'disconnected' : ''} ${isOutOfRange ? 'out-of-range' : ''}`}>
+      <section className={`probe-card ${!isLive ? 'disconnected' : ''} ${isOutOfRange ? 'out-of-range' : ''} ${stallDetected ? 'stall-detected' : ''}`}>
         <div className="probe-header">
           <h2>{name}</h2>
           <div className="probe-actions">
-            <button className="range-button" onClick={() => openRangeEditor(key)}>
-              Set Range
+            <button
+              className={`stall-button ${stallTrackingEnabled ? 'active' : ''}`}
+              onClick={() => toggleStallTracking(key)}
+            >
+              Stall
+            </button>
+            <button
+              className={`range-button ${configuredRange ? 'active' : ''}`}
+              onClick={() => openRangeEditor(key)}
+            >
+              Range
             </button>
             <button className="reset-button" onClick={() => resetProbeHistory(key)}>
               Reset
@@ -574,6 +704,9 @@ function App() {
             <div className="range-editor-actions">
               <button className="range-save-button" onClick={() => saveRange(key)}>
                 Save
+              </button>
+              <button className="range-reset-button" onClick={() => resetRange(key)}>
+                Reset
               </button>
               <button className="range-cancel-button" onClick={cancelRangeEdit}>
                 Cancel
