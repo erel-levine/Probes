@@ -89,3 +89,45 @@ This project uses `uv` for fast Python package management.
 2.  Ensure your TP25 is turned on and within range.
 3.  Open the frontend URL (usually `http://localhost:5173`) in your browser.
 4.  Once connected, temperatures are streamed via WebSocket (`ws://localhost:8000/ws`) and the dashboard updates in real-time.
+
+## Dashboard Features
+
+### Temperature ranges per probe
+
+- Each probe card has a `Range` button.
+- Click `Range` to set `Min`/`Max` for that probe, then `Save`.
+- Use `Reset` in the range dialog to clear the configured range for that probe.
+- The `Range` button is white when no range is set, and orange when a range is configured.
+
+### Range alert
+
+- If a probe is live and current temperature is outside its configured range, that probe card is highlighted with an orange warning background.
+
+### Stall tracking per probe
+
+- Each probe card has a `Stall` toggle.
+- Enable `Stall` on specific probes you want monitored.
+- When a stall is detected, the probe card is highlighted with a yellow warning background.
+
+### Log entries and chart markers
+
+- Use the log input below the header to add a text log entry for the current moment.
+- Each entry is timestamped and shown on the probe charts. Click a marker to open the log bubble.
+- Click the bubble (or click the marker again) to close it.
+
+### Export data (JSON)
+
+- Use the `Export` button to download a JSON file containing:
+    - all log entries
+    - time-series samples for probes that currently have data
+
+Export timestamp structure:
+
+- `exportedAt`: ISO-8601 UTC string (example: `2026-03-03T17:13:58.543Z`)
+- `logs[].timestamp`: Unix epoch milliseconds (number)
+- `probes.<probe>.[] .timestamp`: Unix epoch milliseconds (number)
+
+How to read epoch-millisecond timestamps:
+
+- JavaScript: `new Date(timestamp)`
+- Python: `datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)`
