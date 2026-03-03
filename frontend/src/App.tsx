@@ -19,6 +19,12 @@ interface ProbeSample {
   value: number;
 }
 
+interface LogEntry {
+  id: string;
+  timestamp: number;
+  text: string;
+}
+
 type ProbeHistory = Record<ProbeKey, ProbeSample[]>;
 type ProbeRange = { min: number; max: number };
 type ProbeRanges = Partial<Record<ProbeKey, ProbeRange>>;
@@ -37,6 +43,7 @@ const STALL_WINDOW_MS = 3 * 60 * 1000;
 const STALL_START_RATIO = 0.2;
 const STALL_END_RATIO = 5;
 const STALL_MIN_PREVIOUS_CHANGE_C = 0.5;
+const MAX_LOG_TEXT_LENGTH = 180;
 const CHART_WIDTH = 560;
 const CHART_HEIGHT = 180;
 const X_TICK_COUNT = 6;
@@ -340,6 +347,9 @@ function App() {
   const [editingRangeFor, setEditingRangeFor] = useState<ProbeKey | null>(null);
   const [stallEnabled, setStallEnabled] = useState<ProbeStallFlags>({});
   const [stallActive, setStallActive] = useState<ProbeStallFlags>({});
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logInput, setLogInput] = useState<string>('');
+  const [activeLogMarker, setActiveLogMarker] = useState<{ probeKey: ProbeKey; logId: string } | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -539,6 +549,33 @@ function App() {
     setHistory(emptyProbeHistory());
   };
 
+  const exportAllData = () => {
+    const probesWithData = PROBE_KEYS.reduce<Partial<Record<ProbeKey, ProbeSample[]>>>((accumulator, probeKey) => {
+      if (history[probeKey].length > 0) {
+        accumulator[probeKey] = history[probeKey];
+      }
+      return accumulator;
+    }, {});
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      temperatureUnit,
+      logs,
+      probes: probesWithData
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    anchor.href = url;
+    anchor.download = `thermopro-export-${stamp}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
   const openRangeEditor = (probeKey: ProbeKey) => {
     const existingRange = probeRanges[probeKey];
 
@@ -628,6 +665,22 @@ function App() {
     });
   };
 
+  const addLogEntry = () => {
+    const text = logInput.trim();
+    if (!text) {
+      return;
+    }
+
+    const entry: LogEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: Date.now(),
+      text: text.slice(0, MAX_LOG_TEXT_LENGTH)
+    };
+
+    setLogs((previousLogs) => [...previousLogs, entry]);
+    setLogInput('');
+  };
+
   const renderProbe = (name: string, key: ProbeKey) => {
     const samples = history[key];
     const lastSample = getLastProbeSample(samples);
@@ -651,6 +704,9 @@ function App() {
     const chartPoints = chartDomain ? buildPolylinePoints(samples, chartBounds, chartDomain) : '';
     const xTicks = chartDomain ? buildTicks(chartDomain.startTs, chartDomain.endTs, X_TICK_COUNT) : [];
     const yTicks = chartDomain ? buildTicks(chartDomain.minValue, chartDomain.maxValue, Y_TICK_COUNT) : [];
+    const visibleLogs = chartDomain
+      ? logs.filter((entry) => entry.timestamp >= chartDomain.startTs && entry.timestamp <= chartDomain.endTs)
+      : [];
 
     return (
       <section className={`probe-card ${!isLive ? 'disconnected' : ''} ${isOutOfRange ? 'out-of-range' : ''} ${stallDetected ? 'stall-detected' : ''}`}>
@@ -739,6 +795,43 @@ function App() {
                   </g>
                 );
               })}
+              {visibleLogs.map((entry) => {
+                const xRatio = (entry.timestamp - chartDomain!.startTs) / (chartDomain!.endTs - chartDomain!.startTs);
+                const x = chartBounds.left + xRatio * (chartBounds.right - chartBounds.left);
+                const bubbleWidth = 184;
+                const bubbleHeight = 24;
+                const bubbleX = Math.min(Math.max(x - bubbleWidth / 2, chartBounds.left), chartBounds.right - bubbleWidth);
+                const bubbleY = chartBounds.top + 6;
+                const isActive = activeLogMarker?.probeKey === key && activeLogMarker?.logId === entry.id;
+                const displayText = entry.text.length > 34 ? `${entry.text.slice(0, 34)}…` : entry.text;
+
+                return (
+                  <g key={`log-marker-${entry.id}`}>
+                    <line className="chart-log-tick" x1={x} y1={chartBounds.bottom} x2={x} y2={chartBounds.bottom + 7} />
+                    <circle
+                      className={`chart-log-marker ${isActive ? 'active' : ''}`}
+                      cx={x}
+                      cy={chartBounds.bottom + 8}
+                      r={3.4}
+                      onClick={() => setActiveLogMarker((current) => (
+                        current?.probeKey === key && current?.logId === entry.id
+                          ? null
+                          : { probeKey: key, logId: entry.id }
+                      ))}
+                    >
+                      <title>{entry.text}</title>
+                    </circle>
+                    {isActive && (
+                      <g className="chart-log-bubble" onClick={() => setActiveLogMarker(null)}>
+                        <rect x={bubbleX} y={bubbleY} width={bubbleWidth} height={bubbleHeight} rx={7} ry={7} />
+                        <text x={bubbleX + 8} y={bubbleY + 16} textAnchor="start">
+                          {displayText}
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                );
+              })}
               {yTicks.map((tick, index) => {
                 const yRatio = (tick - chartDomain!.minValue) / (chartDomain!.maxValue - chartDomain!.minValue);
                 const y = chartBounds.bottom - yRatio * (chartBounds.bottom - chartBounds.top);
@@ -811,6 +904,9 @@ function App() {
           <button className="reset-all-button" onClick={resetAllProbeHistory}>
             Reset All
           </button>
+          <button className="export-button" onClick={exportAllData}>
+            Export
+          </button>
           <button
             className={`unit-toggle ${temperatureUnit === 'f' ? 'fahrenheit' : 'celsius'}`}
             onClick={() => setTemperatureUnit((current) => (current === 'c' ? 'f' : 'c'))}
@@ -826,6 +922,25 @@ function App() {
           </div>
         </div>
       </header>
+
+      <section className="log-composer" aria-label="Log a note">
+        <input
+          type="text"
+          value={logInput}
+          onChange={(event) => setLogInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              addLogEntry();
+            }
+          }}
+          maxLength={MAX_LOG_TEXT_LENGTH}
+          placeholder="Add log note for this moment"
+        />
+        <button className="log-add-button" onClick={addLogEntry} disabled={!logInput.trim()}>
+          Add Log
+        </button>
+      </section>
 
       <main className="probe-grid">
         {renderProbe('Probe 1', 'probe1')}

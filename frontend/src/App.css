@@ -48,6 +48,28 @@
   transform: translateY(1px);
 }
 
+.export-button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+}
+
+.export-button:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.export-button:active {
+  transform: translateY(1px);
+}
+
 .eyebrow {
   margin: 0;
   font-size: 0.78rem;
@@ -140,6 +162,57 @@ h1 {
   color: #0f172a;
 }
 
+.log-composer {
+  margin-bottom: 1rem;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #f8fbff;
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.log-composer input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.87rem;
+}
+
+.log-composer input:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.26);
+  outline-offset: 1px;
+  border-color: #93c5fd;
+}
+
+.log-add-button {
+  border: 1px solid #3b82f6;
+  background: #3b82f6;
+  color: #ffffff;
+  border-radius: 9px;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.log-add-button:hover:not(:disabled) {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.log-add-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .probe-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -167,13 +240,13 @@ h1 {
 }
 
 .probe-card.out-of-range {
-  background: #fffbeb;
-  border-color: #f59e0b;
+  background: #fff7ed;
+  border-color: #fdba74;
 }
 
 .probe-card.stall-detected {
-  background: #fff7ed;
-  border-color: #f97316;
+  background: #fefce8;
+  border-color: #eab308;
 }
 
 .probe-header {
@@ -240,9 +313,9 @@ h1 {
 }
 
 .stall-button.active {
-  border-color: #f97316;
-  background: #fff7ed;
-  color: #9a3412;
+  border-color: #eab308;
+  background: #fefce8;
+  color: #854d0e;
 }
 
 .reset-button {
@@ -411,6 +484,39 @@ h1 {
   font-weight: 600;
 }
 
+.chart-log-tick {
+  stroke: #f97316;
+  stroke-width: 1.4;
+}
+
+.chart-log-marker {
+  fill: #fb923c;
+  stroke: #ffffff;
+  stroke-width: 1;
+  cursor: pointer;
+}
+
+.chart-log-marker.active {
+  fill: #ea580c;
+}
+
+.chart-log-bubble rect {
+  fill: #fff7ed;
+  stroke: #fdba74;
+  stroke-width: 1;
+}
+
+.chart-log-bubble text {
+  fill: #7c2d12;
+  font-size: 12.5px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.chart-log-bubble {
+  cursor: pointer;
+}
+
 .chart-line {
   fill: none;
   stroke-width: 2.5;
@@ -472,5 +578,10 @@ h1 {
 
   .probe-grid {
     grid-template-columns: 1fr;
+  }
+
+  .log-composer {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
