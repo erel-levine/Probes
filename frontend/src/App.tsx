@@ -1,17 +1,14 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 
-type ProbeKey = 'probe1' | 'probe2' | 'probe3' | 'probe4';
+type ProbeKey = string;
 type TemperatureUnit = 'c' | 'f';
 
 interface ProbesData {
-  probe1: number | null;
-  probe2: number | null;
-  probe3: number | null;
-  probe4: number | null;
   connected: boolean;
   connection_state?: 'connected' | 'reconnecting' | 'searching';
   device_address?: string | null;
+  [key: string]: unknown;
 }
 
 interface ProbeSample {
@@ -32,9 +29,8 @@ type ProbeRangeDraft = { min: string; max: string };
 type ProbeRangeDrafts = Partial<Record<ProbeKey, ProbeRangeDraft>>;
 type ProbeStallFlags = Partial<Record<ProbeKey, boolean>>;
 
-const PROBE_KEYS: ProbeKey[] = ['probe1', 'probe2', 'probe3', 'probe4'];
-const HISTORY_STORAGE_KEY = 'tp25_probe_history_v1';
-const UNIT_STORAGE_KEY = 'tp25_temperature_unit_v1';
+const HISTORY_STORAGE_KEY = 'thermometer_history_v1';
+const UNIT_STORAGE_KEY = 'thermometer_temperature_unit_v1';
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const WS_WATCHDOG_MS = 4000;
 const WS_STALE_MS = 12000;
@@ -48,6 +44,56 @@ const CHART_WIDTH = 560;
 const CHART_HEIGHT = 180;
 const X_TICK_COUNT = 6;
 const Y_TICK_COUNT = 4;
+
+const MEASUREMENT_EXCLUDED_KEYS = new Set([
+  'connected',
+  'connection_state',
+  'device_address',
+  'last_update',
+  'error',
+  'ble_packet_count',
+  'last_ble_packet',
+  'last_disconnect',
+  'battery'
+]);
+
+const sortProbeKeys = (keys: ProbeKey[]): ProbeKey[] => {
+  const unique = Array.from(new Set(keys));
+
+  return unique.sort((left, right) => {
+    const leftMatch = /^probe(\d+)$/i.exec(left);
+    const rightMatch = /^probe(\d+)$/i.exec(right);
+
+    if (leftMatch && rightMatch) {
+      return Number(leftMatch[1]) - Number(rightMatch[1]);
+    }
+
+    return left.localeCompare(right);
+  });
+};
+
+const getProbeKeysFromData = (data: ProbesData): ProbeKey[] => {
+  return sortProbeKeys(
+    Object.entries(data)
+      .filter(([key, value]) => {
+        if (MEASUREMENT_EXCLUDED_KEYS.has(key)) {
+          return false;
+        }
+        return value === null || (typeof value === 'number' && Number.isFinite(value));
+      })
+      .map(([key]) => key)
+  );
+};
+
+const formatProbeName = (probeKey: ProbeKey): string => {
+  const match = /^probe(\d+)$/i.exec(probeKey);
+  if (!match) {
+    return probeKey
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+  return `Probe ${match[1]}`;
+};
 
 interface ChartBounds {
   left: number;
@@ -63,12 +109,7 @@ interface ChartDomain {
   maxValue: number;
 }
 
-const emptyProbeHistory = (): ProbeHistory => ({
-  probe1: [],
-  probe2: [],
-  probe3: [],
-  probe4: []
-});
+const emptyProbeHistory = (): ProbeHistory => ({});
 
 const loadHistoryFromStorage = (): ProbeHistory => {
   if (typeof window === 'undefined') {
@@ -81,16 +122,16 @@ const loadHistoryFromStorage = (): ProbeHistory => {
       return emptyProbeHistory();
     }
 
-    const parsed = JSON.parse(raw) as Partial<ProbeHistory>;
-    const base = emptyProbeHistory();
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const base: ProbeHistory = {};
 
-    PROBE_KEYS.forEach((key) => {
-      const samples = parsed[key];
+    Object.entries(parsed).forEach(([key, value]) => {
+      const samples = value;
       if (!Array.isArray(samples)) {
         return;
       }
 
-      base[key] = samples.filter(
+      base[key as ProbeKey] = samples.filter(
         (sample): sample is ProbeSample => (
           typeof sample?.timestamp === 'number' &&
           Number.isFinite(sample.timestamp) &&
@@ -299,6 +340,11 @@ const getLastProbeSample = (samples: ProbeSample[]): ProbeSample | null => {
   return samples[samples.length - 1];
 };
 
+const getProbeValue = (data: ProbesData, probeKey: ProbeKey): number | null => {
+  const value = data[probeKey];
+  return (typeof value === 'number' && Number.isFinite(value)) ? value : null;
+};
+
 const getWindowTemperatureChange = (samples: ProbeSample[], startTs: number, endTs: number): number | null => {
   const windowSamples = samples.filter((sample) => sample.timestamp >= startTs && sample.timestamp <= endTs);
   if (windowSamples.length < 2) {
@@ -333,13 +379,10 @@ const getStallChangeRatios = (samples: ProbeSample[], now: number): { lastAbsCha
 
 function App() {
   const [data, setData] = useState<ProbesData>({
-    probe1: null,
-    probe2: null,
-    probe3: null,
-    probe4: null,
     connected: false
   });
   const [history, setHistory] = useState<ProbeHistory>(() => loadHistoryFromStorage());
+  const [probeKeys, setProbeKeys] = useState<ProbeKey[]>(() => sortProbeKeys(Object.keys(loadHistoryFromStorage())));
   const [temperatureUnit, setTemperatureUnit] = useState<TemperatureUnit>(() => loadTemperatureUnitFromStorage());
   const [now, setNow] = useState<number>(() => Date.now());
   const [probeRanges, setProbeRanges] = useState<ProbeRanges>({});
@@ -380,10 +423,10 @@ function App() {
       const nextActive: ProbeStallFlags = { ...previousActive };
       let changed = false;
 
-      PROBE_KEYS.forEach((probeKey) => {
+      probeKeys.forEach((probeKey) => {
         const currentlyActive = Boolean(previousActive[probeKey]);
         const trackingEnabled = Boolean(stallEnabled[probeKey]);
-        const lastSample = getLastProbeSample(history[probeKey]);
+        const lastSample = getLastProbeSample(history[probeKey] ?? []);
         const isLive = Boolean(lastSample) && (now - (lastSample?.timestamp ?? 0) <= PROBE_LIVE_TIMEOUT_MS);
 
         if (!trackingEnabled || !isLive) {
@@ -394,7 +437,7 @@ function App() {
           return;
         }
 
-        const changes = getStallChangeRatios(history[probeKey], now);
+        const changes = getStallChangeRatios(history[probeKey] ?? [], now);
         if (!changes || changes.previousAbsChange < STALL_MIN_PREVIOUS_CHANGE_C) {
           if (currentlyActive) {
             nextActive[probeKey] = false;
@@ -421,7 +464,7 @@ function App() {
 
       return changed ? nextActive : previousActive;
     });
-  }, [history, now, stallEnabled]);
+  }, [history, now, probeKeys, stallEnabled]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -432,22 +475,24 @@ function App() {
 
     const applyIncomingData = (newData: ProbesData) => {
       const timestamp = Date.now();
+      const incomingProbeKeys = getProbeKeysFromData(newData);
+
+      setProbeKeys((previousProbeKeys) => sortProbeKeys([...previousProbeKeys, ...incomingProbeKeys]));
 
       setHistory((previousHistory) => {
-        const nextHistory: ProbeHistory = {
-          probe1: [...previousHistory.probe1],
-          probe2: [...previousHistory.probe2],
-          probe3: [...previousHistory.probe3],
-          probe4: [...previousHistory.probe4]
-        };
+        const nextHistory: ProbeHistory = { ...previousHistory };
 
-        PROBE_KEYS.forEach((probeKey) => {
-          const currentValue = newData[probeKey];
+        incomingProbeKeys.forEach((probeKey) => {
+          if (!nextHistory[probeKey]) {
+            nextHistory[probeKey] = [];
+          }
+
+          const currentValue = getProbeValue(newData, probeKey);
           if (currentValue === null) {
             return;
           }
 
-          nextHistory[probeKey] = [...previousHistory[probeKey], { timestamp, value: currentValue }];
+          nextHistory[probeKey] = [...nextHistory[probeKey], { timestamp, value: currentValue }];
         });
 
         return nextHistory;
@@ -546,16 +591,19 @@ function App() {
   };
 
   const resetAllProbeHistory = () => {
-    setHistory(emptyProbeHistory());
+    setHistory(() => {
+      const cleared: ProbeHistory = {};
+      probeKeys.forEach((probeKey) => {
+        cleared[probeKey] = [];
+      });
+      return cleared;
+    });
   };
 
   const exportAllData = () => {
-    const probesWithData = PROBE_KEYS.reduce<Partial<Record<ProbeKey, ProbeSample[]>>>((accumulator, probeKey) => {
-      if (history[probeKey].length > 0) {
-        accumulator[probeKey] = history[probeKey];
-      }
-      return accumulator;
-    }, {});
+    const probesWithData = Object.fromEntries(
+      Object.entries(history).filter(([, samples]) => samples.length > 0)
+    ) as Record<string, ProbeSample[]>;
 
     const payload = {
       exportedAt: new Date().toISOString(),
@@ -569,7 +617,7 @@ function App() {
     const anchor = document.createElement('a');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     anchor.href = url;
-    anchor.download = `thermopro-export-${stamp}.json`;
+    anchor.download = `thermometer-export-${stamp}.json`;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
@@ -681,8 +729,9 @@ function App() {
     setLogInput('');
   };
 
-  const renderProbe = (name: string, key: ProbeKey) => {
-    const samples = history[key];
+  const renderProbe = (key: ProbeKey) => {
+    const samples = history[key] ?? [];
+    const name = formatProbeName(key);
     const lastSample = getLastProbeSample(samples);
     const latestValue = lastSample?.value ?? null;
     const isLive = Boolean(lastSample) && (now - (lastSample?.timestamp ?? 0) <= PROBE_LIVE_TIMEOUT_MS);
@@ -878,8 +927,8 @@ function App() {
     );
   };
 
-  const liveProbeCount = PROBE_KEYS.filter((key) => {
-    const lastSample = getLastProbeSample(history[key]);
+  const liveProbeCount = probeKeys.filter((key) => {
+    const lastSample = getLastProbeSample(history[key] ?? []);
     if (!lastSample) {
       return false;
     }
@@ -888,17 +937,17 @@ function App() {
   }).length;
 
   const statusText = data.connected
-    ? `Connected • ${liveProbeCount}/4 probes live`
+    ? `Connected • ${liveProbeCount}/${probeKeys.length} probes live`
     : data.connection_state === 'reconnecting' || Boolean(data.device_address)
-      ? 'Reconnecting to TP25...'
-      : 'Searching for TP25...';
+      ? 'Reconnecting to thermometer...'
+      : 'Searching for thermometer...';
 
   return (
     <div className="dashboard">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">ThermoPro Monitor</p>
-          <h1>TP25 Probe Dashboard</h1>
+          <p className="eyebrow">Thermometer Monitor</p>
+          <h1>Probe Dashboard</h1>
         </div>
         <div className="header-controls">
           <button className="reset-all-button" onClick={resetAllProbeHistory}>
@@ -943,10 +992,7 @@ function App() {
       </section>
 
       <main className="probe-grid">
-        {renderProbe('Probe 1', 'probe1')}
-        {renderProbe('Probe 2', 'probe2')}
-        {renderProbe('Probe 3', 'probe3')}
-        {renderProbe('Probe 4', 'probe4')}
+        {probeKeys.map((probeKey) => renderProbe(probeKey))}
       </main>
     </div>
   )
