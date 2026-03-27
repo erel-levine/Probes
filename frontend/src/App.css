@@ -589,16 +589,16 @@ h1 {
 
 .chart-zoom-button {
   position: absolute;
-  top: 6px;
-  left: 6px;
-  width: 28px;
-  height: 28px;
+  top: 4px;
+  left: 4px;
+  width: 14px;
+  height: 14px;
   padding: 0;
   border: 1px solid #cbd5e1;
   background: #ffffff;
   color: #475569;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: 3px;
+  font-size: 7px;
   cursor: pointer;
   display: flex;
   align-items: center;
