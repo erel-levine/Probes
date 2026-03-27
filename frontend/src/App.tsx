@@ -34,6 +34,8 @@ const UNIT_STORAGE_KEY = 'thermometer_temperature_unit_v1';
 const WS_WATCHDOG_MS = 4000;
 const WS_STALE_MS = 12000;
 const PROBE_LIVE_TIMEOUT_MS = 20000;
+const ZOOM_WINDOW_MS = 5 * 60 * 1000; // 5 minutes for chart zoom
+const ZOOM_MARGINS = 0.1; // 10% margins above and below
 const MAX_LOG_TEXT_LENGTH = 180;
 const CHART_WIDTH = 560;
 const CHART_HEIGHT = 180;
@@ -380,6 +382,48 @@ const getChartDomain = (samples: ProbeSample[]): ChartDomain => {
   };
 };
 
+// Get zoomed domain: last 5 minutes with 10% margins
+const getZoomedChartDomain = (samples: ProbeSample[]): ChartDomain | null => {
+  if (samples.length < 2) {
+    return null;
+  }
+
+  const endTs = samples[samples.length - 1].timestamp;
+  const startTs = endTs - ZOOM_WINDOW_MS;
+
+  // Get samples within the zoom window
+  const zoomedSamples = samples.filter((s) => s.timestamp >= startTs && s.timestamp <= endTs);
+
+  if (zoomedSamples.length < 2) {
+    return null;
+  }
+
+  const values = zoomedSamples.map((s) => s.value);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+
+  if (rawMin === rawMax) {
+    const delta = Math.max(1, Math.abs(rawMin) * 0.05);
+    return {
+      startTs,
+      endTs,
+      minValue: rawMin - delta,
+      maxValue: rawMax + delta
+    };
+  }
+
+  // Apply 10% margins above and below
+  const tempRange = rawMax - rawMin;
+  const margin = tempRange * ZOOM_MARGINS;
+
+  return {
+    startTs,
+    endTs,
+    minValue: rawMin - margin,
+    maxValue: rawMax + margin
+  };
+};
+
 const buildTicks = (min: number, max: number, count: number): number[] => {
   if (count <= 1) {
     return [min];
@@ -517,6 +561,7 @@ function App() {
   const [editingRangeFor, setEditingRangeFor] = useState<ProbeKey | null>(null);
   const [stallEnabled, setStallEnabled] = useState<ProbeStallFlags>({});
   const [stallActive, setStallActive] = useState<ProbeStallFlags>({});
+  const [zoomedProbes, setZoomedProbes] = useState<ProbeStallFlags>({});
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logInput, setLogInput] = useState<string>('');
   const [activeLogMarker, setActiveLogMarker] = useState<{ probeKey: ProbeKey; logId: string } | null>(null);
@@ -868,7 +913,10 @@ function App() {
       : 'Not set';
     const stats = getStats(samples);
     const chartBounds = getChartBounds(CHART_WIDTH, CHART_HEIGHT);
-    const chartDomain = samples.length >= 2 ? getChartDomain(samples) : null;
+    const isZoomed = Boolean(zoomedProbes[key]);
+    const zoomedDomain = samples.length >= 2 ? getZoomedChartDomain(samples) : null;
+    const regularDomain = samples.length >= 2 ? getChartDomain(samples) : null;
+    const chartDomain = isZoomed && zoomedDomain ? zoomedDomain : regularDomain;
     const chartPoints = chartDomain ? buildPolylinePoints(samples, chartBounds, chartDomain) : '';
     const xTicks = chartDomain ? buildTicks(chartDomain.startTs, chartDomain.endTs, X_TICK_COUNT) : [];
     const yTicks = chartDomain ? buildTicks(chartDomain.minValue, chartDomain.maxValue, Y_TICK_COUNT) : [];
@@ -941,7 +989,15 @@ function App() {
 
         <div className="chart-wrap">
           {samples.length >= 2 ? (
-            <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" aria-label={`${name} temperature history`}>
+            <>
+              <button
+                className="chart-zoom-button"
+                onClick={() => setZoomedProbes((prev) => ({ ...prev, [key]: !prev[key] }))}
+                title={isZoomed ? 'Show full history' : 'Zoom to last 5 minutes'}
+              >
+                {isZoomed ? '⛶' : '🔍'}
+              </button>
+              <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" aria-label={`${name} temperature history`}>
               <defs>
                 <linearGradient id={`${key}-line`} x1="0" x2="0" y1="0" y2="1">
                   <stop offset="0%" stopColor="#38bdf8" />
@@ -1015,6 +1071,7 @@ function App() {
               })}
               <polyline className="chart-line" points={chartPoints} stroke={`url(#${key}-line)`} />
             </svg>
+            </>
           ) : (
             <div className="chart-empty">Waiting for enough samples…</div>
           )}
