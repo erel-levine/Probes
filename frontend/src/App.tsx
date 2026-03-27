@@ -937,7 +937,7 @@ function App() {
             </button>
             <button
               className={`range-button ${configuredRange ? 'active' : ''}`}
-              onClick={() => openRangeEditor(key)}
+              onClick={() => editingRangeFor === key ? resetRange(key) : openRangeEditor(key)}
             >
               Range
             </button>
