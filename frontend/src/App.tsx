@@ -31,14 +31,9 @@ type ProbeStallFlags = Partial<Record<ProbeKey, boolean>>;
 
 const HISTORY_STORAGE_KEY = 'thermometer_history_v1';
 const UNIT_STORAGE_KEY = 'thermometer_temperature_unit_v1';
-const TEN_MINUTES_MS = 10 * 60 * 1000;
 const WS_WATCHDOG_MS = 4000;
 const WS_STALE_MS = 12000;
 const PROBE_LIVE_TIMEOUT_MS = 20000;
-const STALL_WINDOW_MS = 3 * 60 * 1000;
-const STALL_START_RATIO = 0.2;
-const STALL_END_RATIO = 5;
-const STALL_MIN_PREVIOUS_CHANGE_C = 0.5;
 const MAX_LOG_TEXT_LENGTH = 180;
 const CHART_WIDTH = 560;
 const CHART_HEIGHT = 180;
@@ -209,6 +204,90 @@ const calculateRatePerMinute = (start: ProbeSample, end: ProbeSample): number | 
   return (end.value - start.value) / deltaMinutes;
 };
 
+const RATE_CHANGE_THRESHOLD = 0.1; // °C/min - threshold to consider rate negligible
+const PERIOD_CHANGE_THRESHOLD = 0.3; // °C/min - threshold for rate direction/significance change
+
+// Detect periods of relatively constant rate of change
+const detectPeriods = (samples: ProbeSample[]): Array<{ startIdx: number; endIdx: number }> => {
+  if (samples.length < 2) {
+    return samples.length === 1 ? [{ startIdx: 0, endIdx: 0 }] : [];
+  }
+
+  const periods: Array<{ startIdx: number; endIdx: number }> = [];
+  let periodStart = 0;
+  let lastSignificantRate: number | null = null;
+
+  // Calculate segment rates (grouping nearby samples to smooth noise)
+  const segmentSize = Math.max(2, Math.floor(samples.length / 50)); // ~50 segments maximum
+  
+  for (let i = 1; i < samples.length; i++) {
+    const segmentEnd = Math.min(i + segmentSize, samples.length - 1);
+    const segmentStart = Math.max(0, i - segmentSize);
+    
+    const startSample = samples[segmentStart];
+    const endSample = samples[segmentEnd];
+    const segmentRate = calculateRatePerMinute(startSample, endSample);
+    
+    if (segmentRate === null) {
+      continue;
+    }
+
+    const isSegmentSignificant = Math.abs(segmentRate) > RATE_CHANGE_THRESHOLD;
+    const lastRateSignificant = lastSignificantRate !== null && Math.abs(lastSignificantRate) > RATE_CHANGE_THRESHOLD;
+
+    // Check if we should end the current period
+    let shouldEndPeriod = false;
+
+    if (!lastRateSignificant && isSegmentSignificant) {
+      // Transition from negligible to significant
+      shouldEndPeriod = true;
+    } else if (lastRateSignificant && !isSegmentSignificant) {
+      // Transition from significant to negligible
+      shouldEndPeriod = true;
+    } else if (lastRateSignificant && isSegmentSignificant && lastSignificantRate !== null) {
+      // Both significant - check if direction/magnitude changed significantly
+      const rateChange = Math.abs(segmentRate - lastSignificantRate);
+      if (rateChange > PERIOD_CHANGE_THRESHOLD) {
+        // Direction flipped or magnitude changed substantially
+        shouldEndPeriod = true;
+      }
+    }
+
+    if (shouldEndPeriod && i > periodStart) {
+      periods.push({ startIdx: periodStart, endIdx: i - 1 });
+      periodStart = i;
+    }
+
+    if (isSegmentSignificant) {
+      lastSignificantRate = segmentRate;
+    }
+  }
+
+  // Add final period
+  if (periodStart < samples.length) {
+    periods.push({ startIdx: periodStart, endIdx: samples.length - 1 });
+  }
+
+  return periods;
+};
+
+// Get the current period (containing the most recent sample)
+const getCurrentPeriod = (samples: ProbeSample[], periods: Array<{ startIdx: number; endIdx: number }>) => {
+  if (samples.length === 0 || periods.length === 0) {
+    return null;
+  }
+
+  const lastIdx = samples.length - 1;
+  // Find the period containing the last sample
+  for (const period of periods) {
+    if (lastIdx >= period.startIdx && lastIdx <= period.endIdx) {
+      return period;
+    }
+  }
+
+  return periods[periods.length - 1];
+};
+
 const formatRate = (value: number | null, unit: TemperatureUnit): string => {
   if (value === null) {
     return '—';
@@ -229,21 +308,33 @@ const getStats = (samples: ProbeSample[]) => {
   const avg = values.reduce((acc, value) => acc + value, 0) / values.length;
 
   const first = samples[0];
-  const last = samples[samples.length - 1];
-  const sessionDurationMs = last.timestamp - first.timestamp;
-  const useTenMinuteWindow = sessionDurationMs > TEN_MINUTES_MS;
 
   let rate: number | null = null;
-  if (useTenMinuteWindow) {
-    const tenMinuteStart = last.timestamp - TEN_MINUTES_MS;
-    const windowSamples = samples.filter((sample) => sample.timestamp >= tenMinuteStart);
-    if (windowSamples.length >= 2) {
-      rate = calculateRatePerMinute(windowSamples[0], windowSamples[windowSamples.length - 1]);
-    }
-  }
+  let rateLabel = 'Rate';
+  let periodDurationMs = 0;
 
-  if (rate === null) {
-    rate = calculateRatePerMinute(first, last);
+  const periods = detectPeriods(samples);
+  const currentPeriod = getCurrentPeriod(samples, periods);
+
+  if (currentPeriod && currentPeriod.startIdx < samples.length) {
+    const periodStart = samples[currentPeriod.startIdx];
+    const periodEnd = samples[currentPeriod.endIdx];
+    periodDurationMs = periodEnd.timestamp - periodStart.timestamp;
+    rate = calculateRatePerMinute(periodStart, periodEnd);
+
+    // Format period duration for label
+    const periodMinutes = Math.round(periodDurationMs / 60000);
+    if (periodMinutes < 1) {
+      rateLabel = `Rate (${Math.round(periodDurationMs / 1000)}s period)`;
+    } else if (periodMinutes === 1) {
+      rateLabel = 'Rate (1m period)';
+    } else if (periodMinutes < 60) {
+      rateLabel = `Rate (${periodMinutes}m period)`;
+    } else {
+      const hours = Math.floor(periodMinutes / 60);
+      const mins = periodMinutes % 60;
+      rateLabel = `Rate (${hours}h ${mins}m period)`;
+    }
   }
 
   return {
@@ -251,7 +342,7 @@ const getStats = (samples: ProbeSample[]) => {
     max,
     avg,
     rate,
-    rateLabel: useTenMinuteWindow ? 'Rate (10m avg)' : 'Rate (session avg)',
+    rateLabel,
     connectedFor: formatDuration(first.timestamp)
   };
 };
@@ -265,7 +356,7 @@ const getChartBounds = (width: number, height: number): ChartBounds => ({
 
 const getChartDomain = (samples: ProbeSample[]): ChartDomain => {
   const firstTs = samples[0].timestamp;
-  const lastTs = samples[samples.length - 1].timestamp;
+  const endTs = samples[samples.length - 1].timestamp;
   const values = samples.map((sample) => sample.value);
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
@@ -274,7 +365,7 @@ const getChartDomain = (samples: ProbeSample[]): ChartDomain => {
     const delta = Math.max(1, Math.abs(rawMin) * 0.05);
     return {
       startTs: firstTs,
-      endTs: lastTs === firstTs ? firstTs + 1 : lastTs,
+      endTs: endTs === firstTs ? firstTs + 1 : endTs,
       minValue: rawMin - delta,
       maxValue: rawMax + delta
     };
@@ -283,7 +374,7 @@ const getChartDomain = (samples: ProbeSample[]): ChartDomain => {
   const padding = (rawMax - rawMin) * 0.08;
   return {
     startTs: firstTs,
-    endTs: lastTs === firstTs ? firstTs + 1 : lastTs,
+    endTs: endTs === firstTs ? firstTs + 1 : endTs,
     minValue: rawMin - padding,
     maxValue: rawMax + padding
   };
@@ -345,36 +436,72 @@ const getProbeValue = (data: ProbesData, probeKey: ProbeKey): number | null => {
   return (typeof value === 'number' && Number.isFinite(value)) ? value : null;
 };
 
-const getWindowTemperatureChange = (samples: ProbeSample[], startTs: number, endTs: number): number | null => {
-  const windowSamples = samples.filter((sample) => sample.timestamp >= startTs && sample.timestamp <= endTs);
-  if (windowSamples.length < 2) {
+// Detect stall based on period transitions
+// A stall is when we've transitioned from a significant rate period to a negligible rate period
+const getStallStatus = (samples: ProbeSample[]): { isInStall: boolean; previousWasSignificant: boolean } | null => {
+  if (samples.length < 2) {
     return null;
   }
 
-  const first = windowSamples[0];
-  const last = windowSamples[windowSamples.length - 1];
-  return last.value - first.value;
-};
+  const periods = detectPeriods(samples);
+  if (periods.length < 2) {
+    // Can't have a stall without at least 2 periods
+    return {
+      isInStall: false,
+      previousWasSignificant: false
+    };
+  }
 
-const getStallChangeRatios = (samples: ProbeSample[], now: number): { lastAbsChange: number; previousAbsChange: number } | null => {
-  if (samples.length < 4) {
+  const currentPeriod = getCurrentPeriod(samples, periods);
+  if (!currentPeriod) {
     return null;
   }
 
-  const lastWindowStart = now - STALL_WINDOW_MS;
-  const previousWindowStart = now - STALL_WINDOW_MS * 2;
+  const currentPeriodStart = samples[currentPeriod.startIdx];
+  const currentPeriodEnd = samples[currentPeriod.endIdx];
+  const currentRate = calculateRatePerMinute(currentPeriodStart, currentPeriodEnd);
 
-  const lastChange = getWindowTemperatureChange(samples, lastWindowStart, now);
-  const previousChange = getWindowTemperatureChange(samples, previousWindowStart, lastWindowStart);
-
-  if (lastChange === null || previousChange === null) {
+  if (currentRate === null) {
     return null;
   }
 
-  return {
-    lastAbsChange: Math.abs(lastChange),
-    previousAbsChange: Math.abs(previousChange)
-  };
+  const currentIsNegligible = Math.abs(currentRate) <= RATE_CHANGE_THRESHOLD;
+
+  // Look at previous period to detect transition
+  const currentPeriodIndex = periods.findIndex(
+    (p) => p.startIdx === currentPeriod.startIdx && p.endIdx === currentPeriod.endIdx
+  );
+
+  if (currentPeriodIndex === 0) {
+    // First period ever - no transition yet
+    return {
+      isInStall: false,
+      previousWasSignificant: Math.abs(currentRate) > RATE_CHANGE_THRESHOLD
+    };
+  }
+
+  if (currentPeriodIndex > 0) {
+    const previousPeriod = periods[currentPeriodIndex - 1];
+    const previousPeriodStart = samples[previousPeriod.startIdx];
+    const previousPeriodEnd = samples[previousPeriod.endIdx];
+    const previousRate = calculateRatePerMinute(previousPeriodStart, previousPeriodEnd);
+
+    if (previousRate === null) {
+      return null;
+    }
+
+    const previousWasSignificant = Math.abs(previousRate) > RATE_CHANGE_THRESHOLD;
+
+    // Stall is: transitioned from significant to negligible
+    const isInStall = previousWasSignificant && currentIsNegligible;
+
+    return {
+      isInStall,
+      previousWasSignificant
+    };
+  }
+
+  return null;
 };
 
 function App() {
@@ -437,8 +564,8 @@ function App() {
           return;
         }
 
-        const changes = getStallChangeRatios(history[probeKey] ?? [], now);
-        if (!changes || changes.previousAbsChange < STALL_MIN_PREVIOUS_CHANGE_C) {
+        const stallStatus = getStallStatus(history[probeKey] ?? []);
+        if (!stallStatus) {
           if (currentlyActive) {
             nextActive[probeKey] = false;
             changed = true;
@@ -446,15 +573,7 @@ function App() {
           return;
         }
 
-        const startStall = changes.lastAbsChange <= changes.previousAbsChange * STALL_START_RATIO;
-        const endStall = changes.lastAbsChange >= changes.previousAbsChange * STALL_END_RATIO;
-
-        let nextProbeActive = currentlyActive;
-        if (!currentlyActive && startStall) {
-          nextProbeActive = true;
-        } else if (currentlyActive && endStall) {
-          nextProbeActive = false;
-        }
+        const nextProbeActive = stallStatus.isInStall;
 
         if (nextProbeActive !== currentlyActive) {
           nextActive[probeKey] = nextProbeActive;
